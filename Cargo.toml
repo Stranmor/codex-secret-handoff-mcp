@@ -1,0 +1,22 @@
+[package]
+name = "codex-secret-handoff-mcp"
+version = "0.1.0"
+edition = "2024"
+description = "Local MCP server for secret handoff through the OS keyring without exposing plaintext to model context"
+license = "MIT"
+repository = "https://github.com/Stranmor/codex-secret-handoff-mcp"
+readme = "README.md"
+
+[dependencies]
+rpassword = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+fs2 = "*"
+uuid = { version = "*", features = ["v4"] }
+zeroize = "*"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"

@@ -1,0 +1,9 @@
+{
+  "operations": {
+    "github-publish": {
+      "command": "/usr/bin/gh",
+      "args": ["api", "user"],
+      "secret_env": "GH_TOKEN"
+    }
+  }
+}
