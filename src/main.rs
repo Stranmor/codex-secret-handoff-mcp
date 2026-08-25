@@ -1,5 +1,4 @@
 use fs2::FileExt;
-use rpassword::prompt_password;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -228,19 +227,63 @@ fn validate_text(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn find_executable(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+fn gui_prompt(target: &str, label: &str) -> Result<Zeroizing<Vec<u8>>, String> {
+    let title = format!("Enter secret — {label}");
+    let message =
+        format!("Enter the secret for {target}.\nIt will be stored only in the local OS keyring.");
+    let (program, args): (PathBuf, Vec<String>) = if let Some(path) = find_executable("zenity") {
+        (
+            path,
+            vec![
+                "--password".into(),
+                "--hide-text".into(),
+                "--title".into(),
+                title,
+                "--text".into(),
+                message,
+            ],
+        )
+    } else if let Some(path) = find_executable("kdialog") {
+        (path, vec!["--title".into(), title, "--password".into(), message])
+    } else {
+        return Err("no supported GUI prompt found; install zenity or kdialog".into());
+    };
+
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| "the local GUI prompt could not be opened".to_string())?;
+    if !output.status.success() {
+        return Err("secret entry was cancelled or the local GUI prompt failed".into());
+    }
+    let mut secret = output.stdout;
+    while matches!(secret.last(), Some(b'\n' | b'\r')) {
+        secret.pop();
+    }
+    if secret.is_empty() {
+        return Err("empty secret is not accepted".into());
+    }
+    Ok(Zeroizing::new(secret))
+}
+
 fn capture(target: &str, label: &str, ttl_seconds: u64, single_use: bool) -> Result<Value, String> {
     validate_text(target, "target")?;
     validate_text(label, "label")?;
     let ttl = ttl_seconds.clamp(1, MAX_TTL_SECONDS);
-    let secret = Zeroizing::new(
-        prompt_password("Secret (input hidden): ").map_err(|_| "hidden input failed")?,
-    );
-    if secret.is_empty() {
-        return Err("empty secret is not accepted".into());
-    }
+    let secret = gui_prompt(target.trim(), label.trim())?;
     let handle = format!("sh_{}", Uuid::new_v4().simple());
     let account = format!("handoff:{handle}");
-    secret_tool_store(&account, target, label, secret.as_bytes())?;
+    secret_tool_store(&account, target, label, secret.as_slice())?;
     let record = SecretRecord {
         handle: handle.clone(),
         target: target.trim().to_owned(),
@@ -403,7 +446,7 @@ fn error_result(message: &str) -> Value {
 
 fn tools_list() -> Value {
     json!({"tools":[
-      {"name":"secret_handoff_capture","description":"Capture a secret from a local hidden TTY prompt and store it in the OS keyring; the secret is never an MCP argument or response.","inputSchema":{"type":"object","properties":{"target":{"type":"string"},"label":{"type":"string"},"ttl_seconds":{"type":"integer","minimum":1,"maximum":86400},"single_use":{"type":"boolean"}},"required":["target","label"]},"annotations":{"readOnlyHint":false,"destructiveHint":false}},
+      {"name":"secret_handoff_capture","description":"Open a local GUI prompt, store the entered secret in the OS keyring, and return only an opaque handle; the secret is never an MCP argument or response.","inputSchema":{"type":"object","properties":{"target":{"type":"string"},"label":{"type":"string"},"ttl_seconds":{"type":"integer","minimum":1,"maximum":86400},"single_use":{"type":"boolean"}},"required":["target","label"]},"annotations":{"readOnlyHint":false,"destructiveHint":false}},
       {"name":"secret_handoff_status","description":"Read redacted handles and lifecycle metadata; never returns secret material.","inputSchema":{"type":"object","properties":{"handle":{"type":"string"}}},"annotations":{"readOnlyHint":true}},
       {"name":"secret_handoff_delete","description":"Delete one exact handle from the OS keyring and mark it deleted.","inputSchema":{"type":"object","properties":{"handle":{"type":"string"}},"required":["handle"]},"annotations":{"readOnlyHint":false,"destructiveHint":true}},
       {"name":"secret_handoff_run","description":"Run one locally configured absolute command with a handle injected into its configured environment variable; command and args are never supplied by the model.","inputSchema":{"type":"object","properties":{"handle":{"type":"string"},"operation":{"type":"string"}},"required":["handle","operation"]},"annotations":{"readOnlyHint":false,"destructiveHint":false}}

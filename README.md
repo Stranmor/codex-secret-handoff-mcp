@@ -1,27 +1,40 @@
 # Codex Secret Handoff MCP
 
-Локальный Rust MCP-сервер для передачи API-ключей в разрешённый локальный
-оператор без помещения plaintext в контекст Codex.
+Local Rust MCP server for entering API keys in a local desktop prompt and
+handing them to one explicitly allowlisted local operation without putting
+plaintext into Codex context.
 
-## Что защищается
+## Security properties
 
-- секрет вводится локально через prompt без отображения символов;
-- MCP-аргументы и ответы содержат только непрозрачный `handle` и метаданные;
-- plaintext не записывается в state-файл, stdout, stderr, логи, URL или argv;
-- секрет хранится в системном Secret Service (`secret-tool`/GNOME Keyring);
-- запуск внешней команды возможен только через именованную allowlist-операцию.
+- `secret_handoff_capture` opens a local GUI prompt using `zenity` or `kdialog`.
+- MCP arguments and responses contain only an opaque `handle` and metadata.
+- Plaintext is never written to the state file, MCP stdout, stderr, logs, URLs,
+  or command arguments.
+- Secrets are stored in the operating-system Secret Service through
+  `secret-tool`.
+- External commands are executable only through a named local allowlist entry.
+- Handles can expire and are single-use by default.
 
-Важно: безопасный маршрут не может принять plaintext из сообщения модели. Если
-ключ уже попал в prompt или чат, этот MCP не может задним числом сделать его
-нераскрытым.
+If a secret has already been pasted into a model prompt or chat, this tool
+cannot make that historical exposure disappear.
 
-## Установка
+## Requirements
+
+- Rust toolchain
+- `secret-tool` and a running Secret Service provider
+- One GUI prompt provider: `zenity` or `kdialog`
+- Codex with MCP server support
+
+On a Debian/Ubuntu system, the GUI and keyring packages are typically provided
+by `zenity` and `libsecret-tools`; use the equivalent packages for your system.
+
+## Installation
 
 ```sh
 cargo install --path . --locked
 ```
 
-Для Codex добавьте в `~/.codex/config.toml`:
+Add the server to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.secret-handoff]
@@ -31,16 +44,19 @@ startup_timeout_sec = 30
 tool_timeout_sec = 120
 ```
 
-После изменения конфигурации используйте штатный Codex MCP autoreload или
-перезапустите только Codex App Server в рамках его поддерживаемого маршрута.
+After changing the configuration, use the supported Codex MCP autoreload path
+or restart only the Codex App Server route that owns the configuration.
 
-## Использование
+## Usage
 
-Из Codex вызовите `secret_handoff_capture` с `target`, `label`, сроком жизни и
-флагом `single_use`. Сервер попросит ключ в локальном TTY, сохранит его в
-keyring и вернёт только handle. Для запуска операции вызовите
-`secret_handoff_run` с handle и именем операции. Конфигурация операций хранится
-локально в `${XDG_CONFIG_HOME:-~/.config}/codex-secret-handoff/operations.json`:
+Call `secret_handoff_capture` with a `target`, `label`, optional TTL, and
+`single_use` flag. A local window opens on the desktop; type the key there and
+confirm the dialog. The MCP stores the secret in the OS keyring and
+returns only a handle.
+
+Call `secret_handoff_run` with that handle and an allowlisted operation name.
+The operation configuration lives at
+`${XDG_CONFIG_HOME:-~/.config}/codex-secret-handoff/operations.json`:
 
 ```json
 {
@@ -54,11 +70,12 @@ keyring и вернёт только handle. Для запуска операц�
 }
 ```
 
-Команда должна быть абсолютным путём; shell-строки и произвольные аргументы
-запрещены. Вывод дочерней команды намеренно отбрасывается, а receipt содержит
-только exit-код, длительность и статус.
+Commands must use an absolute executable path and fixed arguments. Shell
+strings and model-supplied commands are rejected. Child stdout and stderr are
+discarded; the result contains only status, exit code, and duration.
 
-CLI-маршрут для среды без MCP:
+The binary also exposes a local CLI for environments that already have an
+approved GUI session:
 
 ```sh
 codex-secret-handoff-mcp capture --target github --label publish --single-use
@@ -66,8 +83,8 @@ codex-secret-handoff-mcp status
 codex-secret-handoff-mcp delete <handle>
 ```
 
-## Ограничения
+## Scope and limitations
 
-Это локальный security boundary, а не менеджер секретов для публикации в
-интернете. Реальная безопасность зависит от доверия к локальной ОС, keyring и
-allowlist-команде. Репозиторий не содержит ключей и не публикует их.
+This is a local security boundary, not an internet-facing secret manager.
+Security still depends on the local OS, desktop session, Secret Service, and
+the configured allowlist operation. The repository contains no credentials.

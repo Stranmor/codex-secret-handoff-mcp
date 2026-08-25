@@ -34,6 +34,8 @@ fn mcp_initialize_and_tools_list_are_machine_readable() {
     let tools: serde_json::Value = serde_json::from_str(&line).expect("valid tools/list JSON");
     let rendered = tools.to_string();
     assert!(rendered.contains("secret_handoff_capture"));
+    assert!(rendered.contains("local GUI prompt"));
+    assert!(!rendered.contains("TTY"));
     assert!(!rendered.contains("secret_value"));
     assert!(!rendered.contains("plaintext_value"));
     let status = child.wait().expect("MCP server exit");

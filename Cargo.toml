@@ -8,7 +8,6 @@ repository = "https://github.com/Stranmor/codex-secret-handoff-mcp"
 readme = "README.md"
 
 [dependencies]
-rpassword = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 fs2 = "*"
