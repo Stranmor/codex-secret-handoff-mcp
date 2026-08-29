@@ -8,9 +8,14 @@ repository = "https://github.com/Stranmor/codex-secret-handoff-mcp"
 readme = "README.md"
 
 [dependencies]
+fs2 = "*"
+libc = "*"
+rmcp = { version = "*", features = ["schemars", "transport-io"] }
+schemars = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
-fs2 = "*"
+tokio = { version = "*", features = ["macros", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = "*"
 uuid = { version = "*", features = ["v4"] }
 zeroize = "*"
 
