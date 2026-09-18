@@ -7,6 +7,11 @@ license = "MIT"
 repository = "https://github.com/Stranmor/codex-secret-handoff-mcp"
 readme = "README.md"
 
+# Standalone workspace root: without this table a parent directory that happens
+# to contain a Cargo workspace (e.g. the shared remote build root) adopts this
+# crate and its members are then resolved instead of ours.
+[workspace]
+
 [dependencies]
 fs2 = "*"
 libc = "*"
