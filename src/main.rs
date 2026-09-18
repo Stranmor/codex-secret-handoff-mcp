@@ -997,7 +997,85 @@ fn migrate_legacy_state(state: &mut State) {
     }
 }
 
+/// Removes abandoned `state.json.<uuid>.tmp` files left behind by an interrupted
+/// commit (process death between create and rename) or by a failed commit.
+/// Only files older than `STALE_STATE_TMP_AGE` are removed so that the in-flight
+/// temporary file of a concurrent writer is never touched. Best effort: callers
+/// ignore failures, a dirty directory must not block state commits.
+const STALE_STATE_TMP_AGE: Duration = Duration::from_secs(600);
+
+fn sweep_stale_state_tmp(directory: &File) -> Result<(), String> {
+    let dir_fd = directory.as_raw_fd();
+    let dup = unsafe { libc::fcntl(dir_fd, libc::F_DUPFD_CLOEXEC, 0) };
+    if dup < 0 {
+        return Err("state directory cannot be inspected".into());
+    }
+    let stream = unsafe { libc::fdopendir(dup) };
+    if stream.is_null() {
+        unsafe {
+            libc::close(dup);
+        }
+        return Err("state directory cannot be read".into());
+    }
+    let mut candidates: Vec<CString> = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let bytes = name.to_bytes();
+        if bytes.starts_with(b"state.json.") && bytes.ends_with(b".tmp") {
+            candidates.push(name.to_owned());
+        }
+    }
+    unsafe {
+        libc::closedir(stream);
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0);
+    for name in candidates {
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstatat(dir_fd, name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW) }
+            != 0
+        {
+            continue;
+        }
+        if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
+            continue;
+        }
+        if now - (stat.st_mtime as i64) < STALE_STATE_TMP_AGE.as_secs() as i64 {
+            continue;
+        }
+        unsafe {
+            libc::unlinkat(dir_fd, name.as_ptr(), 0);
+        }
+    }
+    Ok(())
+}
+
+/// Temporary state file that removes itself unless its rename committed, so a
+/// failed or aborted commit cannot leave `state.json.<uuid>.tmp` behind.
+struct PendingStateTmp<'a> {
+    directory: &'a File,
+    name: CString,
+    committed: bool,
+}
+
+impl Drop for PendingStateTmp<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            unsafe {
+                libc::unlinkat(self.directory.as_raw_fd(), self.name.as_ptr(), 0);
+            }
+        }
+    }
+}
+
 fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
+    let _ = sweep_stale_state_tmp(directory);
     prune_terminal_records(state);
     if state.records.len() > MAX_RECORDS {
         if !state.recovery_mode {
@@ -1023,6 +1101,7 @@ fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
     if fd < 0 {
         return Err("temporary state file cannot be created".into());
     }
+    let mut temporary = PendingStateTmp { directory, name: tmp_name, committed: false };
     let mut file = unsafe { File::from_raw_fd(fd) };
     file.write_all(&payload)
         .and_then(|_| file.sync_all())
@@ -1031,7 +1110,7 @@ fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
     let rename_result = unsafe {
         libc::renameat(
             directory.as_raw_fd(),
-            tmp_name.as_ptr(),
+            temporary.name.as_ptr(),
             directory.as_raw_fd(),
             state_name.as_ptr(),
         )
@@ -1039,6 +1118,7 @@ fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
     if rename_result < 0 {
         return Err("state cannot be committed".into());
     }
+    temporary.committed = true;
     directory.sync_all().map_err(|_| "state directory cannot be synchronized")?;
     Ok(())
 }
@@ -4354,6 +4434,70 @@ mod tests {
             cleanup_keyring_done: false,
             helper_descendants_unknown: false,
         }
+    }
+
+    fn scratch_state_dir(tag: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("codex-secret-handoff-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch state directory");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("scratch permissions");
+        dir
+    }
+
+    fn temporary_state_files(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .expect("read scratch directory")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("state.json.") && name.ends_with(".tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn state_commits_leave_no_temporary_files() {
+        let dir = scratch_state_dir("tmpguard");
+        let blocked = dir.join("state.json");
+        fs::create_dir(&blocked).expect("blocking directory");
+        let directory = open_private_directory(&dir).expect("private directory");
+        let mut state = State::default();
+        assert!(write_state_at(&directory, &mut state).is_err());
+        assert!(
+            temporary_state_files(&dir).is_empty(),
+            "aborted state commit leaked a temporary file"
+        );
+        fs::remove_dir(&blocked).expect("remove blocking directory");
+        let mut state = State::default();
+        write_state_at(&directory, &mut state).expect("state commit");
+        assert!(blocked.is_file());
+        assert!(
+            temporary_state_files(&dir).is_empty(),
+            "successful state commit leaked a temporary file"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sweep_removes_only_stale_temporary_state_files() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = scratch_state_dir("tmpsweep");
+        let stale = dir.join("state.json.11111111-1111-1111-1111-111111111111.tmp");
+        let fresh = dir.join("state.json.22222222-2222-2222-2222-222222222222.tmp");
+        fs::write(&stale, b"{}").expect("stale temporary file");
+        fs::write(&fresh, b"{}").expect("fresh temporary file");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_secs();
+        let aged = libc::timespec { tv_sec: (now - 3600) as libc::time_t, tv_nsec: 0 };
+        let stale_path = CString::new(stale.as_os_str().as_bytes()).expect("stale path");
+        let touched = unsafe {
+            libc::utimensat(libc::AT_FDCWD, stale_path.as_ptr(), [aged, aged].as_ptr(), 0)
+        };
+        assert_eq!(touched, 0, "age the stale temporary file");
+        let directory = open_private_directory(&dir).expect("private directory");
+        sweep_stale_state_tmp(&directory).expect("sweep");
+        assert!(!stale.exists(), "stale temporary state file was kept");
+        assert!(fresh.exists(), "in-flight temporary state file was removed");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
