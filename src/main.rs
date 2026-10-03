@@ -171,7 +171,6 @@ fn process_identity_liveness(identity: &str) -> ProcessLiveness {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum LifecycleStatus {
@@ -491,7 +490,6 @@ fn operation_cgroup_owner_liveness(fence: &OperationCgroupFence) -> ProcessLiven
     }
 }
 
-
 fn record_expired(record: &SecretRecord) -> bool {
     match (record.expires_mono, record.expires_boot_id.as_deref(), monotonic_seconds(), boot_id()) {
         (Some(expires), Some(expected_boot), Some(current), Some(current_boot)) => {
@@ -727,7 +725,6 @@ fn trusted_system_owner() -> Option<u32> {
 fn trusted_system_owner() -> Option<u32> {
     None
 }
-
 
 fn read_state_at(directory: &File) -> Result<State, String> {
     let name = CString::new("state.json").expect("static state filename");
@@ -4385,4 +4382,3 @@ async fn main() {
         std::process::exit(1);
     }
 }
-
