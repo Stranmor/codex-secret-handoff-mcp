@@ -2914,23 +2914,35 @@ fn gui_prompt(
     let message = format!(
         "Enter the secret for {target}.\nIt stays in the local OS keyring and is never returned to the model."
     );
-    let (program, args) = if let Some(path) = trusted_gui_path("zenity") {
-        (
-            path,
-            vec![
-                "--password".into(),
-                "--hide-text".into(),
-                "--title".into(),
-                title,
-                "--text".into(),
-                message,
-            ],
-        )
-    } else if let Some(path) = trusted_gui_path("kdialog") {
-        (path, vec!["--title".into(), title, "--password".into(), message])
-    } else {
-        return Err("no supported trusted GUI prompt found".into());
+    let prefer_kdialog = std::env::var("XDG_CURRENT_DESKTOP")
+        .map(|v| v.to_ascii_lowercase().contains("kde"))
+        .unwrap_or(false);
+    let zenity_spec = || {
+        trusted_gui_path("zenity").map(|path| {
+            (
+                path,
+                vec![
+                    "--entry".into(),
+                    "--hide-text".into(),
+                    "--title".into(),
+                    title.clone(),
+                    "--text".into(),
+                    message.clone(),
+                ],
+            )
+        })
     };
+    let kdialog_spec = || {
+        trusted_gui_path("kdialog").map(|path| {
+            (path, vec!["--title".into(), title.clone(), "--password".into(), message.clone()])
+        })
+    };
+    let (program, args) = if prefer_kdialog {
+        kdialog_spec().or_else(zenity_spec)
+    } else {
+        zenity_spec().or_else(kdialog_spec)
+    }
+    .ok_or_else(|| "no supported trusted GUI prompt found".to_string())?;
     let mut command = Command::new(program.exec_path()?);
     command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     let output = run_command(command, GUI_TIMEOUT, cancellation, MAX_PROVIDER_OUTPUT_BYTES)?;
