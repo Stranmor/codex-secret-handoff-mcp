@@ -24,10 +24,16 @@ fn mcp_initialize_and_tools_list_are_machine_readable() {
     stdout.read_line(&mut line).expect("initialize response");
     let initialize: serde_json::Value = serde_json::from_str(&line).expect("valid initialize JSON");
     assert_eq!(initialize["id"], 1);
-    assert_eq!(initialize["result"]["serverInfo"]["name"], "codex-secret-handoff-mcp");
+    assert_eq!(
+        initialize["result"]["serverInfo"]["name"],
+        "codex-secret-handoff-mcp"
+    );
 
-    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{}}}}"#)
-        .expect("tools/list write");
+    writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{}}}}"#
+    )
+    .expect("tools/list write");
     stdin.flush().expect("tools/list flush");
     line.clear();
     stdout.read_line(&mut line).expect("tools/list response");
@@ -59,7 +65,9 @@ fn mcp_initialize_and_tools_list_are_machine_readable() {
     .expect("invalid capture write");
     stdin.flush().expect("invalid capture flush");
     line.clear();
-    stdout.read_line(&mut line).expect("invalid capture response");
+    stdout
+        .read_line(&mut line)
+        .expect("invalid capture response");
     let invalid_capture: serde_json::Value =
         serde_json::from_str(&line).expect("valid invalid capture JSON");
     let invalid_rendered = invalid_capture.to_string();

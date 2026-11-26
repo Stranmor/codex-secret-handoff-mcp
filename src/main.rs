@@ -91,7 +91,10 @@ struct SecureFile {
 impl SecureFile {
     fn verify_identity(&self) -> Result<(), String> {
         use std::os::unix::fs::MetadataExt;
-        let metadata = self.file.metadata().map_err(|_| "secure file cannot be inspected")?;
+        let metadata = self
+            .file
+            .metadata()
+            .map_err(|_| "secure file cannot be inspected")?;
         if metadata.dev() != self.identity.dev || metadata.ino() != self.identity.ino {
             return Err("secure file identity changed".into());
         }
@@ -100,12 +103,18 @@ impl SecureFile {
 
     fn exec_path(&self) -> Result<PathBuf, String> {
         self.verify_identity()?;
-        Ok(PathBuf::from(format!("/proc/self/fd/{}", self.file.as_raw_fd())))
+        Ok(PathBuf::from(format!(
+            "/proc/self/fd/{}",
+            self.file.as_raw_fd()
+        )))
     }
 
     fn read_bytes(&self, limit: u64) -> Result<Vec<u8>, String> {
         self.verify_identity()?;
-        let file = self.file.try_clone().map_err(|_| "secure file cannot be read")?;
+        let file = self
+            .file
+            .try_clone()
+            .map_err(|_| "secure file cannot be read")?;
         let mut bytes = Vec::new();
         file.take(limit.saturating_add(1))
             .read_to_end(&mut bytes)
@@ -328,9 +337,13 @@ impl<'de> Deserialize<'de> for OperationCgroupFence {
                 boot_id: current.boot_id,
                 identity: current.identity,
             }),
-            Input::Legacy(owner) => {
-                Ok(Self { owner, expires_at: 0, expires_mono: None, boot_id: None, identity: None })
-            },
+            Input::Legacy(owner) => Ok(Self {
+                owner,
+                expires_at: 0,
+                expires_mono: None,
+                boot_id: None,
+                identity: None,
+            }),
         }
     }
 }
@@ -431,7 +444,10 @@ struct CaptureFence {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn boot_id() -> Option<String> {
@@ -479,10 +495,15 @@ fn operation_cgroup_fence_for_owner(owner: &str, identity: CgroupIdentity) -> Op
 }
 
 fn operation_cgroup_expired(fence: &OperationCgroupFence) -> bool {
-    match (fence.expires_mono, fence.boot_id.as_deref(), monotonic_seconds(), boot_id()) {
+    match (
+        fence.expires_mono,
+        fence.boot_id.as_deref(),
+        monotonic_seconds(),
+        boot_id(),
+    ) {
         (Some(expires), Some(expected_boot), Some(current), Some(current_boot)) => {
             expected_boot != current_boot || current >= expires
-        },
+        }
         _ => now() >= fence.expires_at,
     }
 }
@@ -497,14 +518,22 @@ fn operation_cgroup_owner_liveness(fence: &OperationCgroupFence) -> ProcessLiven
 
 #[cfg(test)]
 fn operation_cgroup_owner_live(fence: &OperationCgroupFence) -> bool {
-    matches!(operation_cgroup_owner_liveness(fence), ProcessLiveness::Alive)
+    matches!(
+        operation_cgroup_owner_liveness(fence),
+        ProcessLiveness::Alive
+    )
 }
 
 fn record_expired(record: &SecretRecord) -> bool {
-    match (record.expires_mono, record.expires_boot_id.as_deref(), monotonic_seconds(), boot_id()) {
+    match (
+        record.expires_mono,
+        record.expires_boot_id.as_deref(),
+        monotonic_seconds(),
+        boot_id(),
+    ) {
         (Some(expires), Some(expected_boot), Some(current), Some(current_boot)) => {
             expected_boot != current_boot || current >= expires
-        },
+        }
         _ => now() >= record.expires_at,
     }
 }
@@ -527,7 +556,7 @@ fn lease_liveness(record: &SecretRecord) -> LeaseLiveness {
     } {
         ProcessLiveness::Dead => return LeaseLiveness::Expired,
         ProcessLiveness::Unknown => return LeaseLiveness::Unknown,
-        ProcessLiveness::Alive => {},
+        ProcessLiveness::Alive => {}
     }
     let current_boot = boot_id();
     lease_deadline_liveness(record, monotonic_seconds(), current_boot.as_deref(), now())
@@ -547,7 +576,7 @@ fn lease_deadline_liveness(
                 } else {
                     LeaseLiveness::Expired
                 }
-            },
+            }
             _ => LeaseLiveness::Unknown,
         },
         (None, None) => match record.lease_expires_at {
@@ -590,7 +619,7 @@ fn canonical_state_dir() -> Result<PathBuf, String> {
                     return Err("state directory cannot contain symlink components".into());
                 }
                 break;
-            },
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 let component = existing
                     .file_name()
@@ -598,7 +627,7 @@ fn canonical_state_dir() -> Result<PathBuf, String> {
                     .to_owned();
                 suffix.push(component);
                 existing.pop();
-            },
+            }
             Err(_) => return Err("state directory cannot be inspected".into()),
         }
     }
@@ -674,10 +703,12 @@ fn open_private_directory(path: &Path) -> Result<File, String> {
                     return Err("private directory cannot be opened".into());
                 }
                 unsafe { File::from_raw_fd(fd) }
-            },
+            }
             _ => return Err("private directory cannot be opened".into()),
         };
-        let metadata = next.metadata().map_err(|_| "private directory cannot be inspected")?;
+        let metadata = next
+            .metadata()
+            .map_err(|_| "private directory cannot be inspected")?;
         let mode = metadata.permissions().mode();
         let sticky_shared_directory = mode & 0o1000 != 0 && mode & 0o002 != 0;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -695,7 +726,9 @@ fn open_private_directory(path: &Path) -> Result<File, String> {
         }
         current = next;
     }
-    let metadata = current.metadata().map_err(|_| "private directory cannot be inspected")?;
+    let metadata = current
+        .metadata()
+        .map_err(|_| "private directory cannot be inspected")?;
     if metadata.uid() != uid && metadata.uid() != 0 {
         return Err("private directory has an unexpected owner".into());
     }
@@ -761,7 +794,9 @@ fn read_state_at(directory: &File) -> Result<State, String> {
         return Err("state file cannot be opened".into());
     } else {
         let file = unsafe { File::from_raw_fd(fd) };
-        let metadata = file.metadata().map_err(|_| "state file cannot be inspected")?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| "state file cannot be inspected")?;
         if !metadata.is_file() || metadata.file_type().is_symlink() {
             return Err("state file must be a regular non-symlink file".into());
         }
@@ -810,7 +845,9 @@ fn read_state_at(directory: &File) -> Result<State, String> {
             || fence.owner.len() > 128
             || fence.owner.chars().any(char::is_control)
             || fence.identity.is_none()
-            || fence.identity.is_some_and(|identity| identity.dev == 0 || identity.ino == 0)
+            || fence
+                .identity
+                .is_some_and(|identity| identity.dev == 0 || identity.ino == 0)
             || fence.boot_id.as_ref().is_some_and(|value| {
                 value.is_empty() || value.len() > 128 || value.chars().any(char::is_control)
             })
@@ -824,13 +861,34 @@ fn read_state_at(directory: &File) -> Result<State, String> {
             || record.target.len() > 160
             || record.label.len() > 160
             || record.keyring_account.len() > 256
-            || record.claim_id.as_ref().is_some_and(|value| value.len() > 128)
-            || record.lease_owner.as_ref().is_some_and(|value| value.len() > 128)
-            || record.lease_boot_id.as_ref().is_some_and(|value| value.len() > 128)
-            || record.expires_boot_id.as_ref().is_some_and(|value| value.len() > 128)
-            || record.helper_boot_id.as_ref().is_some_and(|value| value.len() > 128)
-            || record.helper_kind.as_ref().is_some_and(|value| value.len() > 128)
-            || record.last_error.as_ref().is_some_and(|value| value.len() > 2048)
+            || record
+                .claim_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .lease_owner
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .lease_boot_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .expires_boot_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .helper_boot_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .helper_kind
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+            || record
+                .last_error
+                .as_ref()
+                .is_some_and(|value| value.len() > 2048)
             || record.helper_cgroup.as_ref().is_some_and(|path| {
                 path.len() > 512
                     || !Path::new(path).is_absolute()
@@ -850,8 +908,14 @@ fn read_state_at(directory: &File) -> Result<State, String> {
             || record.label.trim().is_empty()
             || record.target.chars().any(|value| value.is_control())
             || record.label.chars().any(|value| value.is_control())
-            || record.claim_id.as_ref().is_some_and(|value| value.chars().any(char::is_control))
-            || record.lease_owner.as_ref().is_some_and(|value| value.chars().any(char::is_control))
+            || record
+                .claim_id
+                .as_ref()
+                .is_some_and(|value| value.chars().any(char::is_control))
+            || record
+                .lease_owner
+                .as_ref()
+                .is_some_and(|value| value.chars().any(char::is_control))
             || record
                 .lease_boot_id
                 .as_ref()
@@ -864,8 +928,14 @@ fn read_state_at(directory: &File) -> Result<State, String> {
                 .helper_boot_id
                 .as_ref()
                 .is_some_and(|value| value.chars().any(char::is_control))
-            || record.helper_kind.as_ref().is_some_and(|value| value.chars().any(char::is_control))
-            || record.last_error.as_ref().is_some_and(|value| value.chars().any(char::is_control))
+            || record
+                .helper_kind
+                .as_ref()
+                .is_some_and(|value| value.chars().any(char::is_control))
+            || record
+                .last_error
+                .as_ref()
+                .is_some_and(|value| value.chars().any(char::is_control))
         {
             return Err("state record exceeds the configured limit".into());
         }
@@ -892,9 +962,11 @@ fn read_state_at(directory: &File) -> Result<State, String> {
         {
             return Err("state record lifecycle fence is invalid".into());
         }
-        if let (Some(pid), Some(pgid), Some(start_ticks)) =
-            (record.helper_pid, record.helper_pgid, record.helper_start_ticks)
-            && (pid == 0 || pgid <= 1 || pgid != pid as i32 || start_ticks == 0)
+        if let (Some(pid), Some(pgid), Some(start_ticks)) = (
+            record.helper_pid,
+            record.helper_pgid,
+            record.helper_start_ticks,
+        ) && (pid == 0 || pgid <= 1 || pgid != pid as i32 || start_ticks == 0)
         {
             return Err("state record helper identity is invalid".into());
         }
@@ -911,7 +983,7 @@ fn read_state_at(directory: &File) -> Result<State, String> {
                 if record.claim_id.is_some() || record.lease_owner.is_none() {
                     return Err("provisioning record lifecycle is invalid".into());
                 }
-            },
+            }
             LifecycleStatus::Active => {
                 if record.claim_id.is_some()
                     || record.lease_owner.is_some()
@@ -920,12 +992,12 @@ fn read_state_at(directory: &File) -> Result<State, String> {
                 {
                     return Err("active record lifecycle is invalid".into());
                 }
-            },
+            }
             LifecycleStatus::Claimed => {
                 if record.claim_id.is_none() || record.lease_owner.is_none() {
                     return Err("claimed record lifecycle is invalid".into());
                 }
-            },
+            }
             LifecycleStatus::Running => {
                 if record.claim_id.is_none()
                     || record.lease_owner.is_none()
@@ -933,8 +1005,8 @@ fn read_state_at(directory: &File) -> Result<State, String> {
                 {
                     return Err("running record lifecycle is invalid".into());
                 }
-            },
-            LifecycleStatus::CleanupPending | LifecycleStatus::Revoked => {},
+            }
+            LifecycleStatus::CleanupPending | LifecycleStatus::Revoked => {}
             LifecycleStatus::Consumed | LifecycleStatus::Deleted | LifecycleStatus::Expired => {
                 if record.claim_id.is_some()
                     || record.lease_owner.is_some()
@@ -945,7 +1017,7 @@ fn read_state_at(directory: &File) -> Result<State, String> {
                 {
                     return Err("terminal record lifecycle is invalid".into());
                 }
-            },
+            }
         }
     }
     for record in state.records.values() {
@@ -981,15 +1053,17 @@ fn migrate_legacy_state(state: &mut State) {
                     record.status = LifecycleStatus::CleanupPending;
                     record.cleanup_target = Some(target);
                     record.generation = record.generation.saturating_add(1);
-                },
+                }
                 LifecycleStatus::CleanupPending if record.cleanup_target.is_none() => {
                     record.cleanup_target = Some(LifecycleStatus::Consumed);
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
     }
-    state.operation_cgroups.retain(|_, fence| fence.identity.is_some());
+    state
+        .operation_cgroups
+        .retain(|_, fence| fence.identity.is_some());
     if needs_schema_migration {
         state.schema_version = CURRENT_STATE_SCHEMA_VERSION;
         prune_terminal_records(state);
@@ -1101,7 +1175,11 @@ fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
     if fd < 0 {
         return Err("temporary state file cannot be created".into());
     }
-    let mut temporary = PendingStateTmp { directory, name: tmp_name, committed: false };
+    let mut temporary = PendingStateTmp {
+        directory,
+        name: tmp_name,
+        committed: false,
+    };
     let mut file = unsafe { File::from_raw_fd(fd) };
     file.write_all(&payload)
         .and_then(|_| file.sync_all())
@@ -1119,7 +1197,9 @@ fn write_state_at(directory: &File, state: &mut State) -> Result<(), String> {
         return Err("state cannot be committed".into());
     }
     temporary.committed = true;
-    directory.sync_all().map_err(|_| "state directory cannot be synchronized")?;
+    directory
+        .sync_all()
+        .map_err(|_| "state directory cannot be synchronized")?;
     Ok(())
 }
 
@@ -1169,7 +1249,7 @@ fn register_operation_cgroup_replacing_identity(
             match expected_existing {
                 Some(expected) if existing.identity == Some(expected) => {
                     state.operation_cgroups.remove(raw);
-                },
+                }
                 _ => return Ok(false),
             }
         }
@@ -1234,7 +1314,9 @@ fn open_state_lock_at(directory: &File, exclusive: bool) -> Result<File, String>
         return Err("state lock cannot be opened".into());
     }
     let lock = unsafe { File::from_raw_fd(fd) };
-    let metadata = lock.metadata().map_err(|_| "state lock cannot be inspected")?;
+    let metadata = lock
+        .metadata()
+        .map_err(|_| "state lock cannot be inspected")?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err("state lock must be a regular non-symlink file".into());
     }
@@ -1254,16 +1336,16 @@ fn open_state_lock_at(directory: &File, exclusive: bool) -> Result<File, String>
         if exclusive {
             match lock.try_lock_exclusive() {
                 Ok(()) => return Ok(lock),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {},
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(_) => return Err("state lock cannot be acquired".into()),
             }
         } else {
             match lock.try_lock_shared() {
                 Ok(()) => return Ok(lock),
-                Err(std::fs::TryLockError::WouldBlock) => {},
+                Err(std::fs::TryLockError::WouldBlock) => {}
                 Err(std::fs::TryLockError::Error(_)) => {
                     return Err("state lock cannot be acquired".into());
-                },
+                }
             }
         }
         if Instant::now() >= deadline {
@@ -1290,7 +1372,8 @@ where
         let _ = lock.unlock();
         return Err(error);
     }
-    lock.unlock().map_err(|_| "state lock cannot be released".to_string())?;
+    lock.unlock()
+        .map_err(|_| "state lock cannot be released".to_string())?;
     result
 }
 
@@ -1331,9 +1414,17 @@ fn secure_open_file_with_options(
     let uid = unsafe { libc::geteuid() };
     let trusted_system_path = path.starts_with("/usr/");
     let owner_allowed = |owner: u32| {
-        if trusted_system_path { owner == 0 } else { owner == uid || (allow_root && owner == 0) }
+        if trusted_system_path {
+            owner == 0
+        } else {
+            owner == uid || (allow_root && owner == 0)
+        }
     };
-    let trusted_ancestor_owner = if trusted_system_path { Some(0) } else { trusted_system_owner() };
+    let trusted_ancestor_owner = if trusted_system_path {
+        Some(0)
+    } else {
+        trusted_system_owner()
+    };
     fn validate_directory(
         metadata: &std::fs::Metadata,
         owner_allowed: &impl Fn(u32) -> bool,
@@ -1372,15 +1463,18 @@ fn secure_open_file_with_options(
         return Err("secure paths must be absolute".into());
     }
     let components = components.collect::<Vec<_>>();
-    let final_component =
-        components.last().ok_or_else(|| "secure file is unavailable".to_string())?;
+    let final_component = components
+        .last()
+        .ok_or_else(|| "secure file is unavailable".to_string())?;
     let mut current = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open("/")
         .map_err(|_| "secure path cannot be opened")?;
     validate_directory(
-        &current.metadata().map_err(|_| "secure path cannot be inspected")?,
+        &current
+            .metadata()
+            .map_err(|_| "secure path cannot be inspected")?,
         &owner_allowed,
         trusted_ancestor_owner,
         allow_non_user_ancestors,
@@ -1394,7 +1488,9 @@ fn secure_open_file_with_options(
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         )?;
         validate_directory(
-            &next.metadata().map_err(|_| "secure path cannot be inspected")?,
+            &next
+                .metadata()
+                .map_err(|_| "secure path cannot be inspected")?,
             &owner_allowed,
             trusted_ancestor_owner,
             allow_non_user_ancestors,
@@ -1408,7 +1504,9 @@ fn secure_open_file_with_options(
         &final_name,
         libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
     )?;
-    let metadata = file.metadata().map_err(|_| "secure file cannot be inspected")?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| "secure file cannot be inspected")?;
     if metadata.file_type().is_symlink() || !metadata.file_type().is_file() {
         return Err("secure file must be a regular non-symlink file".into());
     }
@@ -1421,7 +1519,10 @@ fn secure_open_file_with_options(
     if executable && metadata.permissions().mode() & 0o111 == 0 {
         return Err("configured executable is not executable".into());
     }
-    let identity = CgroupIdentity { dev: metadata.dev(), ino: metadata.ino() };
+    let identity = CgroupIdentity {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+    };
     let path_metadata = fs::symlink_metadata(path).map_err(|_| "secure file is unavailable")?;
     if path_metadata.file_type().is_symlink()
         || !path_metadata.file_type().is_file()
@@ -1454,8 +1555,9 @@ fn prepare_local_command(command: &mut Command) {
 fn cgroup_root() -> Result<PathBuf, String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let uid = unsafe { libc::geteuid() };
-    let configured =
-        env::var("CODEX_SECRET_HANDOFF_CGROUP_ROOT").ok().filter(|value| !value.trim().is_empty());
+    let configured = env::var("CODEX_SECRET_HANDOFF_CGROUP_ROOT")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
     let raw = configured.clone().unwrap_or_else(|| {
         fs::read_to_string("/proc/self/cgroup")
             .ok()
@@ -1571,7 +1673,9 @@ fn open_cgroup_directory_path(path: &Path) -> Result<File, String> {
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         )
         .map_err(|_| "cgroup directory cannot be opened")?;
-        let metadata = next.metadata().map_err(|_| "cgroup directory cannot be inspected")?;
+        let metadata = next
+            .metadata()
+            .map_err(|_| "cgroup directory cannot be inspected")?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err("cgroup directory contains an unsafe component".into());
         }
@@ -1603,7 +1707,9 @@ fn open_cgroup_dir(
     {
         return Err("recorded cgroup path is outside the delegated root".into());
     }
-    let relative = path.strip_prefix(&root).map_err(|_| "recorded cgroup path is invalid")?;
+    let relative = path
+        .strip_prefix(&root)
+        .map_err(|_| "recorded cgroup path is invalid")?;
     let mut components = relative.components().peekable();
     if components.peek().is_none() {
         return Err("recorded cgroup path is invalid".into());
@@ -1620,7 +1726,9 @@ fn open_cgroup_dir(
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err("recorded cgroup path cannot be opened".into()),
         };
-        let metadata = next.metadata().map_err(|_| "recorded cgroup path cannot be inspected")?;
+        let metadata = next
+            .metadata()
+            .map_err(|_| "recorded cgroup path cannot be inspected")?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err("recorded cgroup path is not a regular directory".into());
         }
@@ -1628,7 +1736,10 @@ fn open_cgroup_dir(
             current = next;
             continue;
         }
-        let identity = CgroupIdentity { dev: metadata.dev(), ino: metadata.ino() };
+        let identity = CgroupIdentity {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        };
         let uid = unsafe { libc::geteuid() };
         if metadata.uid() != uid {
             return Err("recorded cgroup has an unexpected owner".into());
@@ -1636,9 +1747,16 @@ fn open_cgroup_dir(
         if expected.is_some_and(|value| value != identity) {
             return Err("recorded cgroup identity no longer matches".into());
         }
-        let parent =
-            current.try_clone().map_err(|_| "recorded cgroup parent cannot be retained")?;
-        return Ok(Some(OperationCgroup { path, identity, file: next, parent, name }));
+        let parent = current
+            .try_clone()
+            .map_err(|_| "recorded cgroup parent cannot be retained")?;
+        return Ok(Some(OperationCgroup {
+            path,
+            identity,
+            file: next,
+            parent,
+            name,
+        }));
     }
     Err("recorded cgroup path is invalid".into())
 }
@@ -1652,8 +1770,11 @@ fn cgroup_member(cgroup: &OperationCgroup, name: &CStr, flags: i32) -> Result<Fi
 #[cfg(target_os = "linux")]
 fn cgroup_populated(cgroup: &OperationCgroup) -> Result<bool, String> {
     let name = CString::new("cgroup.events").expect("static cgroup member name");
-    let mut file =
-        cgroup_member(cgroup, &name, libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW)?;
+    let mut file = cgroup_member(
+        cgroup,
+        &name,
+        libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+    )?;
     let mut bytes = Vec::with_capacity(256);
     std::io::Read::by_ref(&mut file)
         .take(4096)
@@ -1677,12 +1798,18 @@ fn unlink_operation_cgroup(cgroup: &OperationCgroup) -> Result<(), String> {
         libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
     )
     .map_err(|_| "operation cgroup changed before removal")?;
-    let metadata = probe.metadata().map_err(|_| "operation cgroup cannot be inspected")?;
+    let metadata = probe
+        .metadata()
+        .map_err(|_| "operation cgroup cannot be inspected")?;
     if metadata.dev() != cgroup.identity.dev || metadata.ino() != cgroup.identity.ino {
         return Err("operation cgroup changed before removal".into());
     }
     let result = unsafe {
-        libc::unlinkat(cgroup.parent.as_raw_fd(), cgroup.name.as_ptr(), libc::AT_REMOVEDIR)
+        libc::unlinkat(
+            cgroup.parent.as_raw_fd(),
+            cgroup.name.as_ptr(),
+            libc::AT_REMOVEDIR,
+        )
     };
     if result == -1 {
         let error = io::Error::last_os_error();
@@ -1704,9 +1831,14 @@ fn remove_empty_cgroup(cgroup: &OperationCgroup) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn kill_open_cgroup(cgroup: &OperationCgroup) -> Result<(), String> {
     let name = CString::new("cgroup.kill").expect("static cgroup member name");
-    let mut kill_file =
-        cgroup_member(cgroup, &name, libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW)?;
-    kill_file.write_all(b"1").map_err(|_| "operation cgroup could not be terminated")?;
+    let mut kill_file = cgroup_member(
+        cgroup,
+        &name,
+        libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+    )?;
+    kill_file
+        .write_all(b"1")
+        .map_err(|_| "operation cgroup could not be terminated")?;
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         if !cgroup_populated(cgroup)? {
@@ -1730,7 +1862,12 @@ fn create_operation_cgroup() -> Result<OperationCgroup, String> {
     let root = cgroup_root()?;
     let parent = open_cgroup_directory_path(&root)?;
     let uid = unsafe { libc::geteuid() };
-    if parent.metadata().map_err(|_| "delegated cgroup root cannot be inspected")?.uid() != uid {
+    if parent
+        .metadata()
+        .map_err(|_| "delegated cgroup root cannot be inspected")?
+        .uid()
+        != uid
+    {
         return Err("delegated cgroup root is not owned by the current user".into());
     }
     let name = CString::new(format!("codex-secret-handoff-{}", Uuid::new_v4().simple()))
@@ -1747,14 +1884,18 @@ fn create_operation_cgroup() -> Result<OperationCgroup, String> {
             libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
         )
         .map_err(|_| "dedicated operation cgroup cannot be opened")?;
-        let metadata =
-            file.metadata().map_err(|_| "dedicated operation cgroup cannot be inspected")?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| "dedicated operation cgroup cannot be inspected")?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() || metadata.uid() != uid {
             return Err("dedicated operation cgroup has an unexpected owner".into());
         }
         let cgroup = OperationCgroup {
             path,
-            identity: CgroupIdentity { dev: metadata.dev(), ino: metadata.ino() },
+            identity: CgroupIdentity {
+                dev: metadata.dev(),
+                ino: metadata.ino(),
+            },
             file,
             parent: parent
                 .try_clone()
@@ -1763,10 +1904,18 @@ fn create_operation_cgroup() -> Result<OperationCgroup, String> {
         };
         let kill_name = CString::new("cgroup.kill").expect("static cgroup member name");
         let procs_name = CString::new("cgroup.procs").expect("static cgroup member name");
-        cgroup_member(&cgroup, &kill_name, libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .map_err(|_| "dedicated operation cgroup cannot be terminated")?;
-        cgroup_member(&cgroup, &procs_name, libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .map_err(|_| "dedicated operation cgroup cannot receive processes")?;
+        cgroup_member(
+            &cgroup,
+            &kill_name,
+            libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+        .map_err(|_| "dedicated operation cgroup cannot be terminated")?;
+        cgroup_member(
+            &cgroup,
+            &procs_name,
+            libc::O_WRONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+        .map_err(|_| "dedicated operation cgroup cannot receive processes")?;
         Ok(cgroup)
     })();
     match result {
@@ -1781,7 +1930,7 @@ fn create_operation_cgroup() -> Result<OperationCgroup, String> {
                 }
             }
             Err(error)
-        },
+        }
     }
 }
 
@@ -1998,7 +2147,11 @@ fn terminate_child(child: &mut Child, cgroup: Option<&OperationCgroup>) -> Optio
 fn reap_bounded(child: &mut Child, timeout: Duration) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait().map_err(|_| "child status failed")?.is_some() {
+        if child
+            .try_wait()
+            .map_err(|_| "child status failed")?
+            .is_some()
+        {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -2015,12 +2168,16 @@ fn process_start_ticks(pid: u32) -> Result<Option<u64>, String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("process identity could not be inspected".into()),
     };
-    let end = text.rfind(") ").ok_or_else(|| "process identity is malformed".to_string())?;
+    let end = text
+        .rfind(") ")
+        .ok_or_else(|| "process identity is malformed".to_string())?;
     let value = text[end + 2..]
         .split_whitespace()
         .nth(19)
         .ok_or_else(|| "process identity is incomplete".to_string())?;
-    let start_ticks = value.parse().map_err(|_| "process identity is invalid".to_string())?;
+    let start_ticks = value
+        .parse()
+        .map_err(|_| "process identity is invalid".to_string())?;
     Ok(Some(start_ticks))
 }
 
@@ -2056,7 +2213,13 @@ fn open_pidfd(pid: u32) -> Result<Option<File>, String> {
 #[cfg(target_os = "linux")]
 fn pidfd_kill(pidfd: &File) -> Result<(), String> {
     let result = unsafe {
-        libc::syscall(libc::SYS_pidfd_send_signal, pidfd.as_raw_fd(), libc::SIGKILL, 0, 0)
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            pidfd.as_raw_fd(),
+            libc::SIGKILL,
+            0,
+            0,
+        )
     };
     if result < 0 {
         let error = io::Error::last_os_error();
@@ -2126,7 +2289,7 @@ fn kill_recorded_helper(action: &CleanupAction) -> Result<(), String> {
         return Err("recorded helper identity is incomplete".into());
     };
     match boot_id() {
-        Some(current_boot) if current_boot == expected_boot => {},
+        Some(current_boot) if current_boot == expected_boot => {}
         Some(_) => return Ok(()),
         None => return Err("current boot identity could not be verified".into()),
     }
@@ -2136,9 +2299,9 @@ fn kill_recorded_helper(action: &CleanupAction) -> Result<(), String> {
     match process_start_ticks(pid)? {
         Some(current_ticks) if current_ticks != start_ticks => {
             return Err("recorded helper identity no longer matches".into());
-        },
+        }
         None => return Err("recorded helper descendants cannot be verified after pid exit".into()),
-        Some(_) => {},
+        Some(_) => {}
     }
     pidfd_kill(&pidfd)?;
     wait_pidfd(&pidfd, Duration::from_secs(2))
@@ -2201,8 +2364,11 @@ fn write_secret_bounded(
                 if Instant::now() >= deadline {
                     return Err("OS keyring write timed out".into());
                 }
-                let mut pollfd =
-                    libc::pollfd { fd: stdin.as_raw_fd(), events: libc::POLLOUT, revents: 0 };
+                let mut pollfd = libc::pollfd {
+                    fd: stdin.as_raw_fd(),
+                    events: libc::POLLOUT,
+                    revents: 0,
+                };
                 let poll_result = unsafe { libc::poll(&mut pollfd, 1, 50) };
                 if poll_result < 0 {
                     let poll_error = io::Error::last_os_error();
@@ -2212,7 +2378,7 @@ fn write_secret_bounded(
                 } else if pollfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
                     return Err("OS keyring rejected the secret".into());
                 }
-            },
+            }
             Err(_) => return Err("OS keyring rejected the secret".into()),
         }
     }
@@ -2230,7 +2396,9 @@ fn write_secret_bounded(
     if cancellation.is_cancelled() {
         return Err("operation was cancelled".into());
     }
-    stdin.write_all(secret).map_err(|_| "OS keyring rejected the secret".into())
+    stdin
+        .write_all(secret)
+        .map_err(|_| "OS keyring rejected the secret".into())
 }
 
 #[cfg(unix)]
@@ -2251,13 +2419,13 @@ where
             Ok(0) => {
                 stream.take();
                 return Ok(());
-            },
+            }
             Ok(read) => {
                 if output.len().saturating_add(read) > limit {
                     return Err("child output exceeded the configured limit".into());
                 }
                 output.extend_from_slice(&buffer[..read]);
-            },
+            }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
             Err(_) => return Err("child output could not be read".into()),
         }
@@ -2328,23 +2496,25 @@ fn wait_bounded(
                     termination_cleanup_error = terminate_child(&mut child, cgroup);
                     termination_reason = Some(TerminationReason::TimedOut);
                     termination_deadline = Some(Instant::now() + Duration::from_secs(2));
-                },
-                Ok(None) => {},
+                }
+                Ok(None) => {}
                 Err(_) => {
                     let cleanup_error = terminate_child(&mut child, cgroup);
                     return Err(match cleanup_error {
                         Some(cleanup_error) => format!("child status failed; {cleanup_error}"),
                         None => "child status failed".into(),
                     });
-                },
+                }
             }
         }
         if status.is_some() && post_exit_deadline.is_none() {
             post_exit_deadline = Some(Instant::now() + Duration::from_secs(2));
         }
         if termination_deadline.is_some_and(|limit| Instant::now() >= limit) {
-            let mut message =
-                termination_reason.unwrap_or(TerminationReason::TimedOut).message().to_owned();
+            let mut message = termination_reason
+                .unwrap_or(TerminationReason::TimedOut)
+                .message()
+                .to_owned();
             if let Some(error) = termination_cleanup_error.take() {
                 message.push_str("; ");
                 message.push_str(&error);
@@ -2360,7 +2530,7 @@ fn wait_bounded(
                         Some(cleanup_error) => format!("child wait failed; {cleanup_error}"),
                         None => "child wait failed".into(),
                     });
-                },
+                }
             };
             let termination = termination_reason;
             if let Some(cgroup) = cgroup
@@ -2393,16 +2563,24 @@ fn wait_bounded(
             return Err(match cleanup_error {
                 Some(cleanup_error) => {
                     format!("child pipes did not close after process exit; {cleanup_error}")
-                },
+                }
                 None => "child pipes did not close after process exit".into(),
             });
         }
         let mut pollfds = Vec::new();
         if let Some(stream) = stdout.as_ref() {
-            pollfds.push(libc::pollfd { fd: stream.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+            pollfds.push(libc::pollfd {
+                fd: stream.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
         }
         if let Some(stream) = stderr.as_ref() {
-            pollfds.push(libc::pollfd { fd: stream.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+            pollfds.push(libc::pollfd {
+                fd: stream.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
         }
         if pollfds.is_empty() {
             thread::sleep(Duration::from_millis(10));
@@ -2459,7 +2637,10 @@ fn wait_bounded(
         if cancellation.is_cancelled() {
             let termination_error = kill_child(&mut child).err();
             termination_reason = Some(TerminationReason::Cancelled);
-            let wait_error = child.wait().err().map(|_| "child cleanup failed".to_owned());
+            let wait_error = child
+                .wait()
+                .err()
+                .map(|_| "child cleanup failed".to_owned());
             return Err(match termination_error.or(wait_error) {
                 Some(error) => format!("operation was cancelled; {error}"),
                 None => "operation was cancelled".into(),
@@ -2470,12 +2651,19 @@ fn wait_bounded(
             if let Some(reason) = termination_reason {
                 return Err(reason.message().into());
             }
-            return Ok(CommandOutput { status, stdout, _stderr: stderr });
+            return Ok(CommandOutput {
+                status,
+                stdout,
+                _stderr: stderr,
+            });
         }
         if Instant::now() >= deadline {
             let termination_error = kill_child(&mut child).err();
             termination_reason = Some(TerminationReason::TimedOut);
-            let wait_error = child.wait().err().map(|_| "child cleanup failed".to_owned());
+            let wait_error = child
+                .wait()
+                .err()
+                .map(|_| "child cleanup failed".to_owned());
             let reason = termination_reason.unwrap().message();
             return Err(match termination_error.or(wait_error) {
                 Some(error) => format!("{reason}; {error}"),
@@ -2513,14 +2701,14 @@ fn run_command(
                 Ok(()) => "local command could not be started".to_owned(),
                 Err(error) => {
                     format!("local command could not be started; cgroup cleanup pending: {error}")
-                },
+                }
             };
             if let Err(error) = forget {
                 message.push_str("; cgroup metadata cleanup failed: ");
                 message.push_str(&error);
             }
             return Err(message);
-        },
+        }
     };
     let result = wait_bounded(child, timeout, cancellation, output_limit, Some(&cgroup));
     let forget = forget_operation_cgroup_if_absent(&cgroup_raw, cgroup_identity);
@@ -2529,7 +2717,7 @@ fn run_command(
             Ok(_) => format!("operation cgroup metadata cleanup failed: {error}"),
             Err(result_error) => {
                 format!("{result_error}; operation cgroup metadata cleanup failed: {error}")
-            },
+            }
         });
     }
     result
@@ -2624,7 +2812,7 @@ fn secret_tool_store(
                 message.push_str(&error);
             }
             return Err(message);
-        },
+        }
     };
     let pid = child.id();
     let helper = match register_helper(
@@ -2648,7 +2836,7 @@ fn secret_tool_store(
                 message.push_str(&forget_error);
             }
             return Err(message);
-        },
+        }
     };
     let Some(stdin) = child.stdin.take() else {
         let cleanup = terminate_child(&mut child, Some(&cgroup));
@@ -2670,8 +2858,13 @@ fn secret_tool_store(
         return Err(message);
     };
     let write_result = write_secret_bounded(stdin, secret, KEYRING_TIMEOUT, cancellation);
-    let output =
-        wait_bounded(child, KEYRING_TIMEOUT, cancellation, MAX_CHILD_OUTPUT_BYTES, Some(&cgroup));
+    let output = wait_bounded(
+        child,
+        KEYRING_TIMEOUT,
+        cancellation,
+        MAX_CHILD_OUTPUT_BYTES,
+        Some(&cgroup),
+    );
     let output = match output {
         Ok(output) => output,
         Err(wait_error) => {
@@ -2686,7 +2879,7 @@ fn secret_tool_store(
                 message.push_str(&forget_error);
             }
             return Err(message);
-        },
+        }
     };
     if let Err(cleanup_error) = clear_helper(&helper) {
         let forget = forget_operation_cgroup_if_absent(&cgroup_raw, cgroup_identity);
@@ -2699,7 +2892,11 @@ fn secret_tool_store(
     }
     forget_operation_cgroup_if_absent(&cgroup_raw, cgroup_identity)?;
     write_result?;
-    if output.status.success() { Ok(()) } else { Err("OS keyring rejected the secret".into()) }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err("OS keyring rejected the secret".into())
+    }
 }
 
 fn secret_tool_lookup(
@@ -2713,7 +2910,12 @@ fn secret_tool_lookup(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let output = run_command(command, KEYRING_TIMEOUT, cancellation, MAX_PROVIDER_OUTPUT_BYTES)?;
+    let output = run_command(
+        command,
+        KEYRING_TIMEOUT,
+        cancellation,
+        MAX_PROVIDER_OUTPUT_BYTES,
+    )?;
     if !output.status.success() {
         return Err("secret is not available in OS keyring".into());
     }
@@ -2730,14 +2932,19 @@ fn secret_tool_clear(account: &str, cancellation: &CancellationToken) -> Result<
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let output = run_command(command, KEYRING_TIMEOUT, cancellation, MAX_CHILD_OUTPUT_BYTES)?;
+    let output = run_command(
+        command,
+        KEYRING_TIMEOUT,
+        cancellation,
+        MAX_CHILD_OUTPUT_BYTES,
+    )?;
     let mut clear_succeeded = output.status.success();
     for attempt in 0..2 {
         match secret_tool_entry_state(account, cancellation)? {
             KeyringEntryState::Missing => return Ok(()),
             KeyringEntryState::Unavailable => {
                 return Err("OS keyring entry deletion could not be verified".into());
-            },
+            }
             KeyringEntryState::Present if attempt == 0 => {
                 let mut retry = Command::new(executable.exec_path()?);
                 retry
@@ -2749,7 +2956,7 @@ fn secret_tool_clear(account: &str, cancellation: &CancellationToken) -> Result<
                     run_command(retry, KEYRING_TIMEOUT, cancellation, MAX_CHILD_OUTPUT_BYTES)?
                         .status
                         .success();
-            },
+            }
             KeyringEntryState::Present => break,
         }
     }
@@ -2787,12 +2994,22 @@ fn secret_tool_entry_state(
     let executable = secret_tool_path()?;
     let mut command = Command::new(executable.exec_path()?);
     command
-        .args(["search", "--all", "--unlock", "service", SERVICE, "account", account])
+        .args([
+            "search", "--all", "--unlock", "service", SERVICE, "account", account,
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = run_command(command, KEYRING_TIMEOUT, cancellation, MAX_PROVIDER_OUTPUT_BYTES)?;
-    Ok(classify_keyring_search_result(output.status.success(), !output.stdout.is_empty()))
+    let output = run_command(
+        command,
+        KEYRING_TIMEOUT,
+        cancellation,
+        MAX_PROVIDER_OUTPUT_BYTES,
+    )?;
+    Ok(classify_keyring_search_result(
+        output.status.success(),
+        !output.stdout.is_empty(),
+    ))
 }
 
 fn cleanup_keyring(account: &str, cancellation: &CancellationToken) -> Result<(), String> {
@@ -2900,7 +3117,9 @@ fn validate_text(value: &str, field: &str) -> Result<(), String> {
 
 fn validate_ttl(ttl: u64) -> Result<u64, String> {
     if !(1..=MAX_TTL_SECONDS).contains(&ttl) {
-        return Err(format!("ttl_seconds must be between 1 and {MAX_TTL_SECONDS}"));
+        return Err(format!(
+            "ttl_seconds must be between 1 and {MAX_TTL_SECONDS}"
+        ));
     }
     Ok(ttl)
 }
@@ -2934,7 +3153,15 @@ fn gui_prompt(
     };
     let kdialog_spec = || {
         trusted_gui_path("kdialog").map(|path| {
-            (path, vec!["--title".into(), title.clone(), "--password".into(), message.clone()])
+            (
+                path,
+                vec![
+                    "--title".into(),
+                    title.clone(),
+                    "--password".into(),
+                    message.clone(),
+                ],
+            )
         })
     };
     let (program, args) = if prefer_kdialog {
@@ -2944,8 +3171,17 @@ fn gui_prompt(
     }
     .ok_or_else(|| "no supported trusted GUI prompt found".to_string())?;
     let mut command = Command::new(program.exec_path()?);
-    command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-    let output = run_command(command, GUI_TIMEOUT, cancellation, MAX_PROVIDER_OUTPUT_BYTES)?;
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = run_command(
+        command,
+        GUI_TIMEOUT,
+        cancellation,
+        MAX_PROVIDER_OUTPUT_BYTES,
+    )?;
     if !output.status.success() {
         return Err("secret entry was cancelled or the GUI prompt failed".into());
     }
@@ -2986,10 +3222,14 @@ fn finalize_cleanup_parts(
     keyring_result: &Result<(), String>,
 ) -> Result<(), String> {
     with_state(|state| {
-        let record =
-            state.records.get_mut(&action.handle).ok_or_else(|| "unknown handle".to_string())?;
-        if !matches!(record.status, LifecycleStatus::CleanupPending | LifecycleStatus::Revoked)
-            || record.cleanup_target != Some(action.target)
+        let record = state
+            .records
+            .get_mut(&action.handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
+        if !matches!(
+            record.status,
+            LifecycleStatus::CleanupPending | LifecycleStatus::Revoked
+        ) || record.cleanup_target != Some(action.target)
             || record.generation != action.generation
         {
             return Ok(());
@@ -3061,7 +3301,11 @@ fn perform_cleanup(action: &CleanupAction, cancellation: &CancellationToken) -> 
     if let Err(error) = keyring_result {
         errors.push(format!("keyring cleanup failed: {error}"));
     }
-    if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 fn reconcile_operation_cgroups(
@@ -3074,7 +3318,10 @@ fn reconcile_operation_cgroups(
             .iter()
             .filter(|(_, fence)| {
                 operation_cgroup_expired(fence)
-                    || matches!(operation_cgroup_owner_liveness(fence), ProcessLiveness::Dead)
+                    || matches!(
+                        operation_cgroup_owner_liveness(fence),
+                        ProcessLiveness::Dead
+                    )
             })
             .map(|(path, fence)| (path.clone(), fence.clone()))
             .collect::<Vec<_>>())
@@ -3092,10 +3339,10 @@ fn reconcile_operation_cgroups(
                     }
                     Ok(())
                 })?;
-            },
+            }
             Err(error) => {
                 first_cleanup_error.get_or_insert(error);
-            },
+            }
         }
     }
     first_cleanup_error.map_or(Ok(()), Err)
@@ -3129,7 +3376,7 @@ fn reconcile(cancellation: &CancellationToken) -> Result<(), String> {
                 | LifecycleStatus::Revoked => Some(LifecycleStatus::Deleted),
                 LifecycleStatus::CleanupPending => {
                     record.cleanup_target.or(Some(LifecycleStatus::Deleted))
-                },
+                }
                 LifecycleStatus::Active if record_expired(record) => Some(LifecycleStatus::Expired),
                 _ => None,
             };
@@ -3210,10 +3457,17 @@ fn capture(
         state.records.insert(handle.clone(), record.clone());
         Ok(())
     })?;
-    let capture_fence = CaptureFence { handle: handle.clone(), generation: record.generation };
-    if let Err(error) =
-        secret_tool_store(&capture_fence, &target, &label, secret.as_slice(), cancellation)
-    {
+    let capture_fence = CaptureFence {
+        handle: handle.clone(),
+        generation: record.generation,
+    };
+    if let Err(error) = secret_tool_store(
+        &capture_fence,
+        &target,
+        &label,
+        secret.as_slice(),
+        cancellation,
+    ) {
         if let Ok(action) = mark_cleanup_pending(&handle, LifecycleStatus::Deleted, &error) {
             if let Err(cleanup_error) = perform_cleanup(&action, cancellation) {
                 return Err(format!("{error}; cleanup pending: {cleanup_error}"));
@@ -3230,13 +3484,17 @@ fn capture(
             "capture was cancelled after keyring store",
         )?;
         if let Err(cleanup_error) = perform_cleanup(&action, cancellation) {
-            return Err(format!("secret capture was cancelled; cleanup pending: {cleanup_error}"));
+            return Err(format!(
+                "secret capture was cancelled; cleanup pending: {cleanup_error}"
+            ));
         }
         return Err("secret capture was cancelled".into());
     }
     if with_state(|state| {
-        let record =
-            state.records.get(&handle).ok_or_else(|| "capture state disappeared".to_string())?;
+        let record = state
+            .records
+            .get(&handle)
+            .ok_or_else(|| "capture state disappeared".to_string())?;
         Ok(record_expired(record))
     })? {
         let action = mark_cleanup_pending(
@@ -3285,7 +3543,9 @@ fn capture(
             "capture was cancelled before response",
         )?;
         if let Err(cleanup_error) = perform_cleanup(&action, cancellation) {
-            return Err(format!("secret capture was cancelled; cleanup pending: {cleanup_error}"));
+            return Err(format!(
+                "secret capture was cancelled; cleanup pending: {cleanup_error}"
+            ));
         }
         return Err("secret capture was cancelled".into());
     }
@@ -3305,7 +3565,10 @@ fn mark_cleanup_pending(
     error: &str,
 ) -> Result<CleanupAction, String> {
     with_state(|state| {
-        let record = state.records.get_mut(handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         if matches!(
             record.status,
             LifecycleStatus::Consumed | LifecycleStatus::Deleted | LifecycleStatus::Expired
@@ -3344,7 +3607,10 @@ fn prune_terminal_records(state: &mut State) {
     if state.records.len() < MAX_RECORDS {
         return;
     }
-    let excess = state.records.len().saturating_sub(MAX_RECORDS.saturating_sub(1));
+    let excess = state
+        .records
+        .len()
+        .saturating_sub(MAX_RECORDS.saturating_sub(1));
     let mut removable = state
         .records
         .iter()
@@ -3357,7 +3623,12 @@ fn prune_terminal_records(state: &mut State) {
                 && record.lease_owner.is_none()
                 && record.helper_pid.is_none()
         })
-        .map(|(handle, record)| (record.consumed_at.unwrap_or(record.created_at), handle.clone()))
+        .map(|(handle, record)| {
+            (
+                record.consumed_at.unwrap_or(record.created_at),
+                handle.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     removable.sort_by_key(|(timestamp, handle)| (*timestamp, handle.clone()));
     for (_, handle) in removable.into_iter().take(excess) {
@@ -3379,28 +3650,31 @@ fn delete(handle: &str, cancellation: &CancellationToken) -> Result<Value, Strin
         return Err("operation was cancelled".into());
     }
     let action = with_state(|state| {
-        let record = state.records.get_mut(handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         match record.status {
             LifecycleStatus::Deleted | LifecycleStatus::Consumed | LifecycleStatus::Expired => {
                 Ok(None)
-            },
+            }
             LifecycleStatus::CleanupPending => {
                 record.cleanup_target = Some(LifecycleStatus::Deleted);
                 record.generation = record.generation.saturating_add(1);
                 Ok(Some(cleanup_action_for(record, LifecycleStatus::Deleted)))
-            },
+            }
             LifecycleStatus::Claimed | LifecycleStatus::Running => {
                 record.status = LifecycleStatus::Revoked;
                 record.generation = record.generation.saturating_add(1);
                 record.cleanup_target = Some(LifecycleStatus::Deleted);
                 Ok(Some(cleanup_action_for(record, LifecycleStatus::Deleted)))
-            },
+            }
             _ => {
                 record.status = LifecycleStatus::CleanupPending;
                 record.cleanup_target = Some(LifecycleStatus::Deleted);
                 record.generation = record.generation.saturating_add(1);
                 Ok(Some(cleanup_action_for(record, LifecycleStatus::Deleted)))
-            },
+            }
         }
     })?;
     let Some(action) = action else {
@@ -3413,7 +3687,10 @@ fn delete(handle: &str, cancellation: &CancellationToken) -> Result<Value, Strin
 fn claim_for_run(handle: &str, cancellation: &CancellationToken) -> Result<RunClaim, String> {
     validate_text(handle, "handle")?;
     let decision = with_state(|state| {
-        let record = state.records.get_mut(handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         if record.status != LifecycleStatus::Active {
             return Ok(Err(None));
         }
@@ -3422,7 +3699,10 @@ fn claim_for_run(handle: &str, cancellation: &CancellationToken) -> Result<RunCl
             record.cleanup_target = Some(LifecycleStatus::Expired);
             record.last_error = Some("handle expired before operation claim".into());
             record.generation = record.generation.saturating_add(1);
-            return Ok(Err(Some(cleanup_action_for(record, LifecycleStatus::Expired))));
+            return Ok(Err(Some(cleanup_action_for(
+                record,
+                LifecycleStatus::Expired,
+            ))));
         }
         let claim_id = Uuid::new_v4().simple().to_string();
         record.status = LifecycleStatus::Claimed;
@@ -3449,7 +3729,7 @@ fn claim_for_run(handle: &str, cancellation: &CancellationToken) -> Result<RunCl
         Err(Some(action)) => {
             perform_cleanup(&action, cancellation)?;
             Err("handle has expired".into())
-        },
+        }
         Err(None) => Err("handle is not active".into()),
     }
 }
@@ -3480,19 +3760,28 @@ struct LaunchError {
 
 impl LaunchError {
     fn uncertain(message: impl Into<String>) -> Self {
-        Self { message: message.into(), uncertain: true }
+        Self {
+            message: message.into(),
+            uncertain: true,
+        }
     }
 }
 
 impl From<String> for LaunchError {
     fn from(message: String) -> Self {
-        Self { message, uncertain: false }
+        Self {
+            message,
+            uncertain: false,
+        }
     }
 }
 
 impl From<&str> for LaunchError {
     fn from(message: &str) -> Self {
-        Self { message: message.to_owned(), uncertain: false }
+        Self {
+            message: message.to_owned(),
+            uncertain: false,
+        }
     }
 }
 
@@ -3538,8 +3827,10 @@ fn launch_operation(
     let current_boot =
         current_boot.ok_or_else(|| "operation helper boot identity is unavailable".to_string())?;
     {
-        let record =
-            state.records.get(&claim.handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get(&claim.handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         if record.status != LifecycleStatus::Claimed
             || record.claim_id.as_deref() != Some(&claim.claim_id)
             || record.generation != claim.generation
@@ -3561,10 +3852,14 @@ fn launch_operation(
             cleanup,
         )));
     }
-    state.operation_cgroups.insert(cgroup_raw.clone(), operation_cgroup_fence(cgroup_identity));
+    state
+        .operation_cgroups
+        .insert(cgroup_raw.clone(), operation_cgroup_fence(cgroup_identity));
     {
-        let record =
-            state.records.get_mut(&claim.handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(&claim.handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         record.helper_cgroup = Some(cgroup_raw.clone());
         record.helper_cgroup_identity = Some(cgroup_identity);
         record.generation = record.generation.saturating_add(1);
@@ -3580,7 +3875,7 @@ fn launch_operation(
             let message = append_cleanup_error(error, kill_open_cgroup(&cgroup));
             let _ = lock.unlock();
             return Err(LaunchError::uncertain(message));
-        },
+        }
     };
     let mut command = Command::new(command_path);
     command
@@ -3621,14 +3916,14 @@ fn launch_operation(
                         format!(
                             "allowlisted operation could not be started; cgroup cleanup pending: {error}"
                         )
-                    },
+                    }
                 },
                 Err(error) => format!(
                     "allowlisted operation could not be started; cleanup state could not be persisted: {error}"
                 ),
             };
             return Err(LaunchError::uncertain(message));
-        },
+        }
     };
     let pid = child.id();
     let start_ticks = match process_start_ticks(pid) {
@@ -3639,7 +3934,7 @@ fn launch_operation(
                 let error = match &cleanup {
                     Some(cleanup_error) => {
                         format!("operation helper identity could not be verified; {cleanup_error}")
-                    },
+                    }
                     None => "operation helper identity could not be verified".to_owned(),
                 };
                 mark_record_cleanup_pending(record, LifecycleStatus::Deleted, error);
@@ -3650,7 +3945,7 @@ fn launch_operation(
                 Ok(()) => match cleanup {
                     Some(error) => {
                         format!("operation helper identity could not be verified; {error}")
-                    },
+                    }
                     None => "operation helper identity could not be verified".to_owned(),
                 },
                 Err(error) => format!(
@@ -3658,7 +3953,7 @@ fn launch_operation(
                 ),
             };
             return Err(LaunchError::uncertain(message));
-        },
+        }
     };
     let pgid = pid as i32;
     if !process_group_matches(pid, pgid) {
@@ -3667,7 +3962,7 @@ fn launch_operation(
             let error = match &cleanup {
                 Some(cleanup_error) => {
                     format!("operation helper process group could not be verified; {cleanup_error}")
-                },
+                }
                 None => "operation helper process group could not be verified".to_owned(),
             };
             mark_record_cleanup_pending(record, LifecycleStatus::Deleted, error);
@@ -3678,7 +3973,7 @@ fn launch_operation(
             Ok(()) => match cleanup {
                 Some(error) => {
                     format!("operation helper process group could not be verified; {error}")
-                },
+                }
                 None => "operation helper process group could not be verified".to_owned(),
             },
             Err(error) => format!(
@@ -3689,11 +3984,15 @@ fn launch_operation(
     }
     let helper_generation;
     {
-        let record =
-            state.records.get_mut(&claim.handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(&claim.handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         record.status = LifecycleStatus::Running;
         let current_now = now();
-        let lease_seconds = OPERATION_TIMEOUT.saturating_add(OPERATION_LEASE_GRACE).as_secs();
+        let lease_seconds = OPERATION_TIMEOUT
+            .saturating_add(OPERATION_LEASE_GRACE)
+            .as_secs();
         record.lease_expires_at = Some(current_now.saturating_add(lease_seconds));
         record.lease_expires_mono = current_mono.map(|value| value.saturating_add(lease_seconds));
         record.lease_boot_id = Some(current_boot.clone());
@@ -3754,8 +4053,10 @@ fn finish_run(
         outcome_uncertain = true;
     }
     let action = match with_state(|state| {
-        let record =
-            state.records.get_mut(&claim.handle).ok_or_else(|| "unknown handle".to_string())?;
+        let record = state
+            .records
+            .get_mut(&claim.handle)
+            .ok_or_else(|| "unknown handle".to_string())?;
         if record.status == LifecycleStatus::Revoked {
             record.status = LifecycleStatus::CleanupPending;
             record.cleanup_target = Some(LifecycleStatus::Deleted);
@@ -3808,7 +4109,7 @@ fn finish_run(
                 return Err(format!("{error}; cleanup pending: {cleanup_error}"));
             }
             return Err(error);
-        },
+        }
     };
     if let Some(action) = action {
         let mut cleanup_error = perform_cleanup(&action, cancellation).err();
@@ -3842,7 +4143,10 @@ fn finish_run(
 fn load_operation(name: &str) -> Result<(SecureFile, Operation), String> {
     validate_text(name, "operation")?;
     let config = secure_open_file_with_options(&config_file(), false, false, true)?;
-    let metadata = config.file.metadata().map_err(|_| "operation allowlist is unavailable")?;
+    let metadata = config
+        .file
+        .metadata()
+        .map_err(|_| "operation allowlist is unavailable")?;
     if metadata.len() > MAX_OPERATION_FILE_BYTES {
         return Err("operation allowlist exceeds the configured limit".into());
     }
@@ -3896,9 +4200,9 @@ fn run_operation(
                 Ok(()) => error,
                 Err(restore_error) => {
                     format!("{error}; claim restoration failed: {restore_error}")
-                },
+                }
             });
-        },
+        }
     };
     let secret_value = match std::str::from_utf8(secret.as_slice()) {
         Ok(value) => value,
@@ -3908,25 +4212,33 @@ fn run_operation(
                 Ok(()) => error.into(),
                 Err(restore_error) => format!("{error}; claim restoration failed: {restore_error}"),
             });
-        },
+        }
     };
     let started = Instant::now();
-    let (child, helper) =
-        match launch_operation(&claim, &command_path, &operation, secret_value, cancellation) {
-            Ok(launch) => launch,
-            Err(error) => {
-                if !error.uncertain {
-                    let message = match restore_claim(&claim) {
-                        Ok(()) => error.message,
-                        Err(restore_error) => {
-                            format!("{}; claim restoration failed: {restore_error}", error.message)
-                        },
-                    };
-                    return Err(message);
-                }
-                return Err(error.message);
-            },
-        };
+    let (child, helper) = match launch_operation(
+        &claim,
+        &command_path,
+        &operation,
+        secret_value,
+        cancellation,
+    ) {
+        Ok(launch) => launch,
+        Err(error) => {
+            if !error.uncertain {
+                let message = match restore_claim(&claim) {
+                    Ok(()) => error.message,
+                    Err(restore_error) => {
+                        format!(
+                            "{}; claim restoration failed: {restore_error}",
+                            error.message
+                        )
+                    }
+                };
+                return Err(message);
+            }
+            return Err(error.message);
+        }
+    };
     let output = wait_bounded(
         child,
         OPERATION_TIMEOUT,
@@ -3947,7 +4259,7 @@ fn run_operation(
                 Ok(()) => Err(error.clone()),
                 Err(cleanup_error) => Err(format!("{error}; cleanup pending: {cleanup_error}")),
             };
-        },
+        }
     };
     finish_run(&claim, &helper, false, cancellation)?;
     Ok(outcome)
@@ -4079,11 +4391,17 @@ impl SecretHandoffServer {
                 let single_use = request.single_use.unwrap_or(true);
                 task::spawn_blocking(move || {
                     reconcile(&cancellation)?;
-                    capture(&request.target, &request.label, ttl, single_use, &cancellation)
+                    capture(
+                        &request.target,
+                        &request.label,
+                        ttl,
+                        single_use,
+                        &cancellation,
+                    )
                 })
                 .await
                 .map_err(|_| ErrorData::internal_error("capture worker failed", None))?
-            },
+            }
             "secret_handoff_status" => {
                 let request: StatusRequest =
                     serde_json::from_value(Value::Object(args)).map_err(|error| {
@@ -4096,7 +4414,7 @@ impl SecretHandoffServer {
                 task::spawn_blocking(move || list_status(request.handle.as_deref()))
                     .await
                     .map_err(|_| ErrorData::internal_error("status worker failed", None))?
-            },
+            }
             "secret_handoff_delete" => {
                 let request: DeleteRequest =
                     serde_json::from_value(Value::Object(args)).map_err(|error| {
@@ -4112,7 +4430,7 @@ impl SecretHandoffServer {
                 })
                 .await
                 .map_err(|_| ErrorData::internal_error("delete worker failed", None))?
-            },
+            }
             "secret_handoff_run" => {
                 let request: RunRequest =
                     serde_json::from_value(Value::Object(args)).map_err(|error| {
@@ -4128,7 +4446,7 @@ impl SecretHandoffServer {
                 })
                 .await
                 .map_err(|_| ErrorData::internal_error("run worker failed", None))?
-            },
+            }
             _ => return Err(ErrorData::invalid_params("unknown tool", None)),
         };
         match result {
@@ -4205,7 +4523,12 @@ where
 
 impl<R> BoundedLineReader<R> {
     fn new(inner: R, max_line_length: usize) -> Self {
-        Self { inner, line_length: 0, max_line_length, rejected: false }
+        Self {
+            inner,
+            line_length: 0,
+            max_line_length,
+            rejected: false,
+        }
     }
 }
 
@@ -4290,7 +4613,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
                     waiting.await.map(|_| ()).map_err(|error| error.into())
                 }
             }
-        },
+        }
         Err(error) => Err(error.into()),
     };
     reaper_cancel.cancel();
@@ -4312,11 +4635,11 @@ async fn cli(args: &[String]) -> Result<(), String> {
                     "--target" => {
                         index += 1;
                         target = args.get(index).cloned();
-                    },
+                    }
                     "--label" => {
                         index += 1;
                         label = args.get(index).cloned();
-                    },
+                    }
                     "--ttl-seconds" => {
                         index += 1;
                         ttl = args
@@ -4324,7 +4647,7 @@ async fn cli(args: &[String]) -> Result<(), String> {
                             .ok_or_else(|| "ttl_seconds is required".to_string())?
                             .parse()
                             .map_err(|_| "ttl_seconds must be an integer".to_string())?;
-                    },
+                    }
                     "--reusable" => single_use = false,
                     _ => return Err("unknown capture argument".into()),
                 }
@@ -4344,7 +4667,7 @@ async fn cli(args: &[String]) -> Result<(), String> {
                 serde_json::to_string_pretty(&value).map_err(|_| "result cannot be serialized")?
             );
             Ok(())
-        },
+        }
         "status" => {
             let handle = args.get(2).map(String::to_owned);
             let value = task::spawn_blocking(move || list_status(handle.as_deref()))
@@ -4355,9 +4678,12 @@ async fn cli(args: &[String]) -> Result<(), String> {
                 serde_json::to_string_pretty(&value).map_err(|_| "result cannot be serialized")?
             );
             Ok(())
-        },
+        }
         "delete" => {
-            let handle = args.get(2).ok_or_else(|| "handle is required".to_string())?.clone();
+            let handle = args
+                .get(2)
+                .ok_or_else(|| "handle is required".to_string())?
+                .clone();
             let cancellation = CancellationToken::new();
             let value = task::spawn_blocking(move || {
                 reconcile(&cancellation)?;
@@ -4370,7 +4696,7 @@ async fn cli(args: &[String]) -> Result<(), String> {
                 serde_json::to_string_pretty(&value).map_err(|_| "result cannot be serialized")?
             );
             Ok(())
-        },
+        }
         "run" => {
             let handle_index = args
                 .iter()
@@ -4380,8 +4706,10 @@ async fn cli(args: &[String]) -> Result<(), String> {
                 .iter()
                 .position(|value| value == "--operation")
                 .ok_or_else(|| "operation is required".to_string())?;
-            let handle =
-                args.get(handle_index + 1).ok_or_else(|| "handle is required".to_string())?.clone();
+            let handle = args
+                .get(handle_index + 1)
+                .ok_or_else(|| "handle is required".to_string())?
+                .clone();
             let operation = args
                 .get(operation_index + 1)
                 .ok_or_else(|| "operation is required".to_string())?
@@ -4398,7 +4726,7 @@ async fn cli(args: &[String]) -> Result<(), String> {
                 serde_json::to_string_pretty(&value).map_err(|_| "result cannot be serialized")?
             );
             Ok(())
-        },
+        }
         _ => Err("commands: serve, capture, status, delete, run".into()),
     }
 }
@@ -4498,11 +4826,22 @@ mod tests {
         let fresh = dir.join("state.json.22222222-2222-2222-2222-222222222222.tmp");
         fs::write(&stale, b"{}").expect("stale temporary file");
         fs::write(&fresh, b"{}").expect("fresh temporary file");
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system clock").as_secs();
-        let aged = libc::timespec { tv_sec: (now - 3600) as libc::time_t, tv_nsec: 0 };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        let aged = libc::timespec {
+            tv_sec: (now - 3600) as libc::time_t,
+            tv_nsec: 0,
+        };
         let stale_path = CString::new(stale.as_os_str().as_bytes()).expect("stale path");
         let touched = unsafe {
-            libc::utimensat(libc::AT_FDCWD, stale_path.as_ptr(), [aged, aged].as_ptr(), 0)
+            libc::utimensat(
+                libc::AT_FDCWD,
+                stale_path.as_ptr(),
+                [aged, aged].as_ptr(),
+                0,
+            )
         };
         assert_eq!(touched, 0, "age the stale temporary file");
         let directory = open_private_directory(&dir).expect("private directory");
@@ -4553,16 +4892,28 @@ mod tests {
         );
 
         record.lease_expires_mono = Some(200);
-        assert_eq!(lease_deadline_liveness(&record, None, Some("boot"), 0), LeaseLiveness::Unknown);
-        assert_eq!(lease_deadline_liveness(&record, Some(100), None, 0), LeaseLiveness::Unknown);
+        assert_eq!(
+            lease_deadline_liveness(&record, None, Some("boot"), 0),
+            LeaseLiveness::Unknown
+        );
+        assert_eq!(
+            lease_deadline_liveness(&record, Some(100), None, 0),
+            LeaseLiveness::Unknown
+        );
     }
 
     #[test]
     fn legacy_lease_uses_wall_clock_only_without_monotonic_state() {
         let mut record = lease_test_record();
         record.lease_expires_at = Some(200);
-        assert_eq!(lease_deadline_liveness(&record, None, None, 100), LeaseLiveness::Live);
-        assert_eq!(lease_deadline_liveness(&record, None, None, 200), LeaseLiveness::Expired);
+        assert_eq!(
+            lease_deadline_liveness(&record, None, None, 100),
+            LeaseLiveness::Live
+        );
+        assert_eq!(
+            lease_deadline_liveness(&record, None, None, 200),
+            LeaseLiveness::Expired
+        );
     }
 
     #[test]
@@ -4712,22 +5063,30 @@ mod tests {
             operation_cgroups: BTreeMap::new(),
             recovery_mode: false,
         };
-        fs::write(dir.join("state.json"), serde_json::to_vec(&legacy).expect("state JSON"))
-            .expect("legacy state");
+        fs::write(
+            dir.join("state.json"),
+            serde_json::to_vec(&legacy).expect("state JSON"),
+        )
+        .expect("legacy state");
 
         let state = read_state(&dir).expect("oversized legacy state is recoverable");
         assert!(state.recovery_mode);
         assert_eq!(state.records.len(), MAX_RECORDS + 1);
         assert!(
-            state.records.values().all(|record| record.status == LifecycleStatus::CleanupPending)
+            state
+                .records
+                .values()
+                .all(|record| record.status == LifecycleStatus::CleanupPending)
         );
         let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
     fn legacy_operation_cgroup_fences_are_released_for_descriptor_rediscovery() {
-        let dir = std::env::temp_dir()
-            .join(format!("codex-secret-handoff-cgroup-schema-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!(
+            "codex-secret-handoff-cgroup-schema-{}",
+            Uuid::new_v4()
+        ));
         fs::create_dir_all(&dir).expect("state directory");
         fs::write(
             dir.join("state.json"),
@@ -4897,7 +5256,11 @@ mod tests {
         }
         prune_terminal_records(&mut state);
         assert_eq!(state.records.len(), MAX_RECORDS - 1);
-        assert!(state.records.contains_key(&format!("sh_{}", MAX_RECORDS - 1)));
+        assert!(
+            state
+                .records
+                .contains_key(&format!("sh_{}", MAX_RECORDS - 1))
+        );
     }
 
     #[test]
@@ -4971,8 +5334,11 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("codex-secret-handoff-schema-{}", Uuid::new_v4()));
         fs::create_dir_all(&dir).expect("state directory");
-        fs::write(dir.join("state.json"), br#"{"schema_version":999,"records":{}}"#)
-            .expect("future state");
+        fs::write(
+            dir.join("state.json"),
+            br#"{"schema_version":999,"records":{}}"#,
+        )
+        .expect("future state");
         let error = read_state(&dir).expect_err("future schema must fail closed");
         assert!(error.contains("newer unsupported schema"));
         let _ = fs::remove_dir_all(dir);
@@ -5022,8 +5388,11 @@ mod tests {
             operation_cgroups: BTreeMap::new(),
             recovery_mode: false,
         };
-        fs::write(dir.join("state.json"), serde_json::to_vec(&state).expect("state JSON"))
-            .expect("write state");
+        fs::write(
+            dir.join("state.json"),
+            serde_json::to_vec(&state).expect("state JSON"),
+        )
+        .expect("write state");
         let error = read_state(&dir).expect_err("invalid helper identity must fail closed");
         assert!(error.contains("helper identity is invalid"));
         let _ = fs::remove_dir_all(dir);
@@ -5065,9 +5434,18 @@ mod tests {
 
     #[test]
     fn keyring_search_failures_are_unavailable_not_missing() {
-        assert_eq!(classify_keyring_search_result(false, false), KeyringEntryState::Unavailable);
-        assert_eq!(classify_keyring_search_result(true, false), KeyringEntryState::Missing);
-        assert_eq!(classify_keyring_search_result(true, true), KeyringEntryState::Present);
+        assert_eq!(
+            classify_keyring_search_result(false, false),
+            KeyringEntryState::Unavailable
+        );
+        assert_eq!(
+            classify_keyring_search_result(true, false),
+            KeyringEntryState::Missing
+        );
+        assert_eq!(
+            classify_keyring_search_result(true, true),
+            KeyringEntryState::Present
+        );
     }
 
     #[test]
@@ -5089,8 +5467,10 @@ mod tests {
         let Ok(cgroup) = create_operation_cgroup() else {
             return;
         };
-        let wrong =
-            CgroupIdentity { dev: cgroup.identity.dev, ino: cgroup.identity.ino.saturating_add(1) };
+        let wrong = CgroupIdentity {
+            dev: cgroup.identity.dev,
+            ino: cgroup.identity.ino.saturating_add(1),
+        };
         assert!(kill_cgroup_path(&cgroup.path.to_string_lossy(), Some(wrong)).is_err());
         remove_empty_cgroup(&cgroup).expect("remove test cgroup");
     }
